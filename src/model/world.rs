@@ -2,7 +2,6 @@ use Entity;
 
 pub struct World {
     regions: Map<Vector2<u64>, Region>,
-    entities: Map<u64, Entity>,
 }
 
 pub struct Region {
