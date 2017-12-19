@@ -1,9 +1,6 @@
-///
-///
-///
-///
-///
-///
+/// Modified Implementation of ECS
+/// https://github.com/Hazurl/ECS/blob/master/include/ecs/component/ComponentPool.hpp
+/// https://github.com/Hazurl/ECS/blob/master/include/ecs/container/SparseSet.hpp
 ///
 
 type EntityID = usize;
