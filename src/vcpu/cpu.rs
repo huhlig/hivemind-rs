@@ -9,18 +9,18 @@ pub struct VCPU16 {
     registers: [u16; 12],
     memory: [u16; 65536],
     state: State,
-    busy: u16,
+
 }
 
 pub enum State {
+    Idle,
+    Busy(u16, Instruction),
+    Sleeping(u16),
     Hibernating,
-    Sleeping,
-    Active,
     Halted,
-    Busy,
 }
 
-pub enum Register {
+enum Register {
     A = 0x0,
     B = 0x1,
     C = 0x2,
@@ -35,13 +35,18 @@ pub enum Register {
     IA = 0xB,
 }
 
-pub enum Value {
+enum Value {
     Register { register: Register, value: u16 },
     Memory { address: u16, value: u16 },
     Literal { value: u16 },
 }
 
-pub enum Instruction {
+struct Decoded<T> {
+    pub result: T,
+    pub time: usize,
+}
+
+enum Instruction {
     ERR,
     NOP,
     HIB,
@@ -89,8 +94,7 @@ impl VCPU16 {
         VCPU16 {
             registers: [0; 12],
             memory: [0; 65536],
-            state: State::Active,
-            busy: 0,
+            state: State::Idle,
         }
     }
     pub fn load_memory(&mut self, reader: &mut Read) {
@@ -152,85 +156,120 @@ impl VCPU16 {
     /// * By using 0x18, 0x19, 0x1A as PEEK, POP/PUSH, and PICK there's a reverse stack
     ///   starting at memory location 0xFFFF. Example: "SET PUSH, 10", "SET X, POP"
     /// * Attempting to write to a literal value fails silently
-    fn decode_left(&mut self, instruction_word: u16) -> Value {
+    fn decode_left(&mut self, instruction_word: u16) -> Decoded<Value> {
         match (instruction_word & 0xFC00) >> 10 {
             0x00 => { // A
-                Value::Register {
-                    register: Register::A,
-                    value: self.registers[Register::A as usize],
+                Decoded {
+                    result: Value::Register {
+                        register: Register::A,
+                        value: self.registers[Register::A as usize],
+                    },
+                    time: 0,
                 }
             }
             0x01 => { // B
-                Value::Register {
-                    register: Register::B,
-                    value: self.registers[Register::B as usize],
+                Decoded {
+                    result: Value::Register {
+                        register: Register::B,
+                        value: self.registers[Register::B as usize],
+                    },
+                    time: 0,
                 }
             }
             0x02 => { // C
-                Value::Register {
-                    register: Register::C,
-                    value: self.registers[Register::C as usize],
+                Decoded {
+                    result: Value::Register {
+                        register: Register::C,
+                        value: self.registers[Register::C as usize],
+                    },
+                    time: 0,
                 }
             }
             0x03 => { // X
-                Value::Register {
-                    register: Register::X,
-                    value: self.registers[Register::X as usize],
+                Decoded {
+                    result: Value::Register {
+                        register: Register::X,
+                        value: self.registers[Register::X as usize],
+                    },
+                    time: 0,
                 }
             }
             0x04 => { // Y
-                Value::Register {
-                    register: Register::Y,
-                    value: self.registers[Register::Y as usize],
+                Decoded {
+                    result: Value::Register {
+                        register: Register::Y,
+                        value: self.registers[Register::Y as usize],
+                    },
+                    time: 0,
                 }
             }
             0x05 => { // Z
-                Value::Register {
-                    register: Register::Z,
-                    value: self.registers[Register::Z as usize],
+                Decoded {
+                    result: Value::Register {
+                        register: Register::Z,
+                        value: self.registers[Register::Z as usize],
+                    },
+                    time: 0,
                 }
             }
             0x06 => { // I
-                Value::Register {
-                    register: Register::I,
-                    value: self.registers[Register::I as usize],
+                Decoded {
+                    result: Value::Register {
+                        register: Register::I,
+                        value: self.registers[Register::I as usize],
+                    },
+                    time: 0,
                 }
             }
             0x07 => { // J
-                Value::Register {
-                    register: Register::J,
-                    value: self.registers[Register::J as usize],
+                Decoded {
+                    result: Value::Register {
+                        register: Register::J,
+                        value: self.registers[Register::J as usize],
+                    },
+                    time: 0,
                 }
             }
             0x08 => {  // [A]
                 let address: u16 = self.registers[Register::A as usize];
                 let value: u16 = self.memory[address as usize];
-                Value::Memory { address, value }
+                Decoded { result: Value::Memory { address, value }, time: 0 }
             }
             0x09 => {  // [B]
-                let address: u16 = self.registers[Register::B as usize];
+                let address: u16 = self.registers[Register::A as usize];
                 let value: u16 = self.memory[address as usize];
-                Value::Memory { address, value }
+                Decoded { result: Value::Memory { address, value }, time: 0 }
             }
-            // TODO: Start Here
-            0x0A => Value::Memory { // [C]
-                address: self.registers[Register::C as usize],
-                value: self.memory[self.registers[Register::C as usize] as usize],
-            },
-            0x0B => Value::Memory { // [X]
-                address: self.registers[Register::X as usize],
-                value: self.memory[self.registers[Register::X as usize] as usize],
-            },
-            0x0C => Value::Memory { // [Y]
-                address: self.registers[Register::Y as usize],
-                value: self.memory[self.registers[Register::Y as usize] as usize],
-            },
-            0x0D => Value::Memory {
-                address: self.registers[Register::Z as usize],
-                value: self.memory[self.registers[Register::Z as usize] as usize],
-            }, // [z]
-            0x0E => Value::Memory { address: self.registers[Register::I as usize], value: self.memory[self.registers[Register::I as usize] as usize] }, // [i]
-            0x0F => Value::Memory { address: self.registers[Register::J as usize], value: self.memory[self.registers[Register::J as usize] as usize] }, // [j]
+            0x0A => { // [C]
+                let address: u16 = self.registers[Register::C as usize];
+                let value: u16 = self.memory[address as usize];
+                Decoded { result: Value::Memory { address, value }, time: 0 }
+            }
+            0x0B => { // [X]
+                let address: u16 = self.registers[Register::X as usize];
+                let value: u16 = self.memory[address as usize];
+                Decoded { result: Value::Memory { address, value }, time: 0 }
+            }
+            0x0C => { // [Y]
+                let address: u16 = self.registers[Register::Y as usize];
+                let value: u16 = self.memory[address as usize];
+                Decoded { result: Value::Memory { address, value }, time: 0 }
+            }
+            0x0D => { // [Z]
+                let address: u16 = self.registers[Register::Z as usize];
+                let value: u16 = self.memory[address as usize];
+                Decoded { result: Value::Memory { address, value }, time: 0 }
+            }
+            0x0E => { // [I]
+                let address: u16 = self.registers[Register::I as usize];
+                let value: u16 = self.memory[address as usize];
+                Decoded { result: Value::Memory { address, value }, time: 0 }
+            }
+            0x0F => { // [J]
+                let address: u16 = self.registers[Register::J as usize];
+                let value: u16 = self.memory[address as usize];
+                Decoded { result: Value::Memory { address, value }, time: 0 }
+            }
             0x10 => { // [A + NEXT]
                 let base: u16 = self.registers[Register::A as usize];
                 let next: u16 = self.registers[Register::PC as usize];
@@ -238,8 +277,7 @@ impl VCPU16 {
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
                 self.registers[Register::PC as usize] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x11 => { // [B + NEXT]
                 let base: u16 = self.registers[Register::B as usize];
@@ -248,8 +286,7 @@ impl VCPU16 {
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
                 self.registers[Register::PC as usize] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x12 => { // [C + NEXT]
                 let base: u16 = self.registers[Register::C as usize];
@@ -258,8 +295,7 @@ impl VCPU16 {
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
                 self.registers[Register::PC as usize] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x13 => { // [X + NEXT]
                 let base: u16 = self.registers[Register::X as usize];
@@ -267,9 +303,8 @@ impl VCPU16 {
                 let offset: u16 = self.memory[next as usize];
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::PC] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                self.registers[Register::PC as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x14 => { // [Y + NEXT]
                 let base: u16 = self.registers[Register::Y as usize];
@@ -277,9 +312,8 @@ impl VCPU16 {
                 let offset: u16 = self.memory[next as usize];
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::PC] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                self.registers[Register::PC as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x15 => { // [Z + NEXT]
                 let base: u16 = self.registers[Register::Z as usize];
@@ -287,9 +321,8 @@ impl VCPU16 {
                 let offset: u16 = self.memory[next as usize];
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::PC] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                self.registers[Register::PC as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x16 => { // [I + NEXT]
                 let base: u16 = self.registers[Register::I as usize];
@@ -297,9 +330,8 @@ impl VCPU16 {
                 let offset: u16 = self.memory[next as usize];
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::PC] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                self.registers[Register::PC as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x17 => { // [J + NEXT]
                 let base: u16 = self.registers[Register::J as usize];
@@ -307,20 +339,19 @@ impl VCPU16 {
                 let offset: u16 = self.memory[next as usize];
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::PC] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                self.registers[Register::PC as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x18 => { // Stack Pop [SP++] (left only)
                 let address: u16 = self.registers[Register::SP as usize];
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::SP] += 1;
-                Value::Memory { address, value }
+                self.registers[Register::SP as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 0 }
             }
             0x19 => { // Stack Peek [SP]
-                let address: u16 = self.registers[Register::SP];
+                let address: u16 = self.registers[Register::SP as usize];
                 let value: u16 = self.memory[address as usize];
-                Value::Memory { address, value }
+                Decoded { result: Value::Memory { address, value }, time: 0 }
             }
             0x1A => { // Stack Pick [SP + NEXT]
                 let base: u16 = self.registers[Register::SP as usize];
@@ -328,60 +359,81 @@ impl VCPU16 {
                 let offset: u16 = self.memory[next as usize];
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::PC] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                self.registers[Register::PC as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
-            0x1B => { Value::Register { register: Register::SP, value: self.registers[Register::SP as usize] } } // sp
-            0x1C => { Value::Register { register: Register::PC, value: self.registers[Register::PC as usize] } } // pc
-            0x1D => { Value::Register { register: Register::EX, value: self.registers[Register::EX as usize] } } // sp
+            0x1B => { // SP
+                Decoded {
+                    result: Value::Register {
+                        register: Register::SP,
+                        value: self.registers[Register::SP as usize],
+                    },
+                    time: 0,
+                }
+            }
+            0x1C => { // PC
+                Decoded {
+                    result: Value::Register {
+                        register: Register::PC,
+                        value: self.registers[Register::PC as usize],
+                    },
+                    time: 0,
+                }
+            }
+            0x1D => { // EX
+                Decoded {
+                    result: Value::Register {
+                        register: Register::EX,
+                        value: self.registers[Register::EX as usize],
+                    },
+                    time: 0,
+                }
+            }
             0x1E => { // [NEXT]
-                let next: u16 = self.registers[Register::PC];
+                let next: u16 = self.registers[Register::PC as usize];
                 let address: u16 = self.memory[next as usize];
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::PC] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                self.registers[Register::PC as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x1F => { // NEXT (literal)
-                let next: u16 = self.registers[Register::PC];
+                let next: u16 = self.registers[Register::PC as usize];
                 let value: u16 = self.memory[next as usize];
-                self.registers[Register::PC];
-                self.delay += 1;
-                Value::Literal { value }
+                self.registers[Register::PC as usize];
+                Decoded { result: Value::Literal { value }, time: 1 }
             }
-            0x20 => { Value::Literal { value: -1 } }
-            0x21 => { Value::Literal { value: 0 } }
-            0x22 => { Value::Literal { value: 1 } }
-            0x23 => { Value::Literal { value: 2 } }
-            0x24 => { Value::Literal { value: 3 } }
-            0x25 => { Value::Literal { value: 4 } }
-            0x26 => { Value::Literal { value: 5 } }
-            0x27 => { Value::Literal { value: 6 } }
-            0x28 => { Value::Literal { value: 7 } }
-            0x29 => { Value::Literal { value: 8 } }
-            0x2A => { Value::Literal { value: 9 } }
-            0x2B => { Value::Literal { value: 10 } }
-            0x2C => { Value::Literal { value: 11 } }
-            0x2D => { Value::Literal { value: 12 } }
-            0x2E => { Value::Literal { value: 13 } }
-            0x2F => { Value::Literal { value: 14 } }
-            0x30 => { Value::Literal { value: 15 } }
-            0x31 => { Value::Literal { value: 16 } }
-            0x32 => { Value::Literal { value: 17 } }
-            0x33 => { Value::Literal { value: 18 } }
-            0x34 => { Value::Literal { value: 19 } }
-            0x35 => { Value::Literal { value: 20 } }
-            0x36 => { Value::Literal { value: 21 } }
-            0x37 => { Value::Literal { value: 22 } }
-            0x38 => { Value::Literal { value: 23 } }
-            0x39 => { Value::Literal { value: 24 } }
-            0x3A => { Value::Literal { value: 25 } }
-            0x3B => { Value::Literal { value: 26 } }
-            0x3C => { Value::Literal { value: 27 } }
-            0x3D => { Value::Literal { value: 28 } }
-            0x3E => { Value::Literal { value: 29 } }
-            0x3F => { Value::Literal { value: 30 } }
+            0x20 => { Decoded { result: Value::Literal { value: 0xFFFF }, time: 0 } }
+            0x21 => { Decoded { result: Value::Literal { value: 0 }, time: 0 } }
+            0x22 => { Decoded { result: Value::Literal { value: 1 }, time: 0 } }
+            0x23 => { Decoded { result: Value::Literal { value: 2 }, time: 0 } }
+            0x24 => { Decoded { result: Value::Literal { value: 3 }, time: 0 } }
+            0x25 => { Decoded { result: Value::Literal { value: 4 }, time: 0 } }
+            0x26 => { Decoded { result: Value::Literal { value: 5 }, time: 0 } }
+            0x27 => { Decoded { result: Value::Literal { value: 6 }, time: 0 } }
+            0x28 => { Decoded { result: Value::Literal { value: 7 }, time: 0 } }
+            0x29 => { Decoded { result: Value::Literal { value: 8 }, time: 0 } }
+            0x2A => { Decoded { result: Value::Literal { value: 9 }, time: 0 } }
+            0x2B => { Decoded { result: Value::Literal { value: 10 }, time: 0 } }
+            0x2C => { Decoded { result: Value::Literal { value: 11 }, time: 0 } }
+            0x2D => { Decoded { result: Value::Literal { value: 12 }, time: 0 } }
+            0x2E => { Decoded { result: Value::Literal { value: 13 }, time: 0 } }
+            0x2F => { Decoded { result: Value::Literal { value: 14 }, time: 0 } }
+            0x30 => { Decoded { result: Value::Literal { value: 15 }, time: 0 } }
+            0x31 => { Decoded { result: Value::Literal { value: 16 }, time: 0 } }
+            0x32 => { Decoded { result: Value::Literal { value: 17 }, time: 0 } }
+            0x33 => { Decoded { result: Value::Literal { value: 18 }, time: 0 } }
+            0x34 => { Decoded { result: Value::Literal { value: 19 }, time: 0 } }
+            0x35 => { Decoded { result: Value::Literal { value: 20 }, time: 0 } }
+            0x36 => { Decoded { result: Value::Literal { value: 21 }, time: 0 } }
+            0x37 => { Decoded { result: Value::Literal { value: 22 }, time: 0 } }
+            0x38 => { Decoded { result: Value::Literal { value: 23 }, time: 0 } }
+            0x39 => { Decoded { result: Value::Literal { value: 24 }, time: 0 } }
+            0x3A => { Decoded { result: Value::Literal { value: 25 }, time: 0 } }
+            0x3B => { Decoded { result: Value::Literal { value: 26 }, time: 0 } }
+            0x3C => { Decoded { result: Value::Literal { value: 27 }, time: 0 } }
+            0x3D => { Decoded { result: Value::Literal { value: 28 }, time: 0 } }
+            0x3E => { Decoded { result: Value::Literal { value: 29 }, time: 0 } }
+            0x3F => { Decoded { result: Value::Literal { value: 30 }, time: 0 } }
         }
     }
     ///
@@ -407,147 +459,256 @@ impl VCPU16 {
     /// * By using 0x18, 0x19, 0x1a as PEEK, POP/PUSH, and PICK there's a reverse stack
     ///   starting at memory location 0xffff. Example: "SET PUSH, 10", "SET X, POP"
     /// * Attempting to write to a literal value fails silently
-    fn decode_right(&mut self, instruction_word: u16) -> Value {
+    fn decode_right(&mut self, instruction_word: u16) -> Decoded<Value> {
         match (instruction_word & 0x03E0) >> 5 {
-            0x00 => Value::Register { register: Register::A, value: self.a }, // a
-            0x01 => Value::Register { register: Register::B, value: self.b }, // b
-            0x02 => Value::Register { register: Register::C, value: self.c }, // c
-            0x03 => Value::Register { register: Register::X, value: self.x }, // x
-            0x04 => Value::Register { register: Register::Y, value: self.y }, // y
-            0x05 => Value::Register { register: Register::Z, value: self.z }, // z
-            0x06 => Value::Register { register: Register::I, value: self.i }, // i
-            0x07 => Value::Register { register: Register::J, value: self.j }, // j
-            0x08 => Value::Memory { address: self.a, value: self.memory[self.a as usize] }, // [a]
-            0x09 => Value::Memory { address: self.b, value: self.memory[self.b as usize] }, // [b]
-            0x0A => Value::Memory { address: self.c, value: self.memory[self.c as usize] }, // [c]
-            0x0B => Value::Memory { address: self.x, value: self.memory[self.x as usize] }, // [x]
-            0x0C => Value::Memory { address: self.y, value: self.memory[self.y as usize] }, // [y]
-            0x0D => Value::Memory { address: self.z, value: self.memory[self.z as usize] }, // [z]
-            0x0E => Value::Memory { address: self.i, value: self.memory[self.i as usize] }, // [i]
-            0x0F => Value::Memory { address: self.j, value: self.memory[self.j as usize] }, // [j]
+            0x00 => { // A
+                Decoded {
+                    result: Value::Register {
+                        register: Register::A,
+                        value: self.registers[Register::A as usize],
+                    },
+                    time: 0,
+                }
+            }
+            0x01 => { // B
+                Decoded {
+                    result: Value::Register {
+                        register: Register::B,
+                        value: self.registers[Register::B as usize],
+                    },
+                    time: 0,
+                }
+            }
+            0x02 => { // C
+                Decoded {
+                    result: Value::Register {
+                        register: Register::C,
+                        value: self.registers[Register::C as usize],
+                    },
+                    time: 0,
+                }
+            }
+            0x03 => { // X
+                Decoded {
+                    result: Value::Register {
+                        register: Register::X,
+                        value: self.registers[Register::X as usize],
+                    },
+                    time: 0,
+                }
+            }
+            0x04 => { // Y
+                Decoded {
+                    result: Value::Register {
+                        register: Register::Y,
+                        value: self.registers[Register::Y as usize],
+                    },
+                    time: 0,
+                }
+            }
+            0x05 => { // Z
+                Decoded {
+                    result: Value::Register {
+                        register: Register::Z,
+                        value: self.registers[Register::Z as usize],
+                    },
+                    time: 0,
+                }
+            }
+            0x06 => { // I
+                Decoded {
+                    result: Value::Register {
+                        register: Register::I,
+                        value: self.registers[Register::I as usize],
+                    },
+                    time: 0,
+                }
+            }
+            0x07 => { // J
+                Decoded {
+                    result: Value::Register {
+                        register: Register::J,
+                        value: self.registers[Register::J as usize],
+                    },
+                    time: 0,
+                }
+            }
+            0x08 => {  // [A]
+                let address: u16 = self.registers[Register::A as usize];
+                let value: u16 = self.memory[address as usize];
+                Decoded { result: Value::Memory { address, value }, time: 0 }
+            }
+            0x09 => {  // [B]
+                let address: u16 = self.registers[Register::A as usize];
+                let value: u16 = self.memory[address as usize];
+                Decoded { result: Value::Memory { address, value }, time: 0 }
+            }
+            0x0A => { // [C]
+                let address: u16 = self.registers[Register::C as usize];
+                let value: u16 = self.memory[address as usize];
+                Decoded { result: Value::Memory { address, value }, time: 0 }
+            }
+            0x0B => { // [X]
+                let address: u16 = self.registers[Register::X as usize];
+                let value: u16 = self.memory[address as usize];
+                Decoded { result: Value::Memory { address, value }, time: 0 }
+            }
+            0x0C => { // [Y]
+                let address: u16 = self.registers[Register::Y as usize];
+                let value: u16 = self.memory[address as usize];
+                Decoded { result: Value::Memory { address, value }, time: 0 }
+            }
+            0x0D => { // [Z]
+                let address: u16 = self.registers[Register::Z as usize];
+                let value: u16 = self.memory[address as usize];
+                Decoded { result: Value::Memory { address, value }, time: 0 }
+            }
+            0x0E => { // [I]
+                let address: u16 = self.registers[Register::I as usize];
+                let value: u16 = self.memory[address as usize];
+                Decoded { result: Value::Memory { address, value }, time: 0 }
+            }
+            0x0F => { // [J]
+                let address: u16 = self.registers[Register::J as usize];
+                let value: u16 = self.memory[address as usize];
+                Decoded { result: Value::Memory { address, value }, time: 0 }
+            }
             0x10 => { // [A + NEXT]
-                let base: u16 = self.registers[Register::A];
-                let next: u16 = self.registers[Register::PC];
+                let base: u16 = self.registers[Register::A as usize];
+                let next: u16 = self.registers[Register::PC as usize];
                 let offset: u16 = self.memory[next as usize];
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::PC] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                self.registers[Register::PC as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x11 => { // [B + NEXT]
-                let base: u16 = self.registers[Register::B];
-                let next: u16 = self.registers[Register::PC];
+                let base: u16 = self.registers[Register::B as usize];
+                let next: u16 = self.registers[Register::PC as usize];
                 let offset: u16 = self.memory[next as usize];
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::PC] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                self.registers[Register::PC as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x12 => { // [C + NEXT]
-                let base: u16 = self.registers[Register::C];
-                let next: u16 = self.registers[Register::PC];
+                let base: u16 = self.registers[Register::C as usize];
+                let next: u16 = self.registers[Register::PC as usize];
                 let offset: u16 = self.memory[next as usize];
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::PC] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                self.registers[Register::PC as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x13 => { // [X + NEXT]
-                let base: u16 = self.registers[Register::X];
-                let next: u16 = self.registers[Register::PC];
+                let base: u16 = self.registers[Register::X as usize];
+                let next: u16 = self.registers[Register::PC as usize];
                 let offset: u16 = self.memory[next as usize];
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::PC] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                self.registers[Register::PC as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x14 => { // [Y + NEXT]
-                let base: u16 = self.registers[Register::Y];
-                let next: u16 = self.registers[Register::PC];
+                let base: u16 = self.registers[Register::Y as usize];
+                let next: u16 = self.registers[Register::PC as usize];
                 let offset: u16 = self.memory[next as usize];
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::PC] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                self.registers[Register::PC as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x15 => { // [Z + NEXT]
-                let base: u16 = self.registers[Register::Z];
-                let next: u16 = self.registers[Register::PC];
+                let base: u16 = self.registers[Register::Z as usize];
+                let next: u16 = self.registers[Register::PC as usize];
                 let offset: u16 = self.memory[next as usize];
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::PC] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                self.registers[Register::PC as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x16 => { // [I + NEXT]
-                let base: u16 = self.registers[Register::I];
-                let next: u16 = self.registers[Register::PC];
+                let base: u16 = self.registers[Register::I as usize];
+                let next: u16 = self.registers[Register::PC as usize];
                 let offset: u16 = self.memory[next as usize];
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::PC] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                self.registers[Register::PC as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x17 => { // [J + NEXT]
-                let base: u16 = self.registers[Register::J];
-                let next: u16 = self.registers[Register::PC];
+                let base: u16 = self.registers[Register::J as usize];
+                let next: u16 = self.registers[Register::PC as usize];
                 let offset: u16 = self.memory[next as usize];
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::PC] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                self.registers[Register::PC as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x18 => { // Stack Push [--SP] (right only)
-                self.registers[Register::SP] -= 1;
-                let address: u16 = self.registers[Register::SP];
-                let value: u16 = self.memory[address];
-                Value::Memory { address, value }
+                self.registers[Register::SP as usize] -= 1;
+                let address: u16 = self.registers[Register::SP as usize];
+                let value: u16 = self.memory[address as usize];
+                Decoded { result: Value::Memory { address, value }, time: 0 }
             }
             0x19 => { // Stack Peek [SP]
-                let address: u16 = self.registers[Register::SP];
-                let value: u16 = self.memory[self.sp as usize];
-                Value::Memory { address, value }
+                let address: u16 = self.registers[Register::SP as usize];
+                let value: u16 = self.memory[address as usize];
+                Decoded { result: Value::Memory { address, value }, time: 0 }
             }
             0x1A => { // Stack Pick [SP + NEXT]
-                let base: u16 = self.registers[Register::SP];
-                let next: u16 = self.registers[Register::PC];
+                let base: u16 = self.registers[Register::SP as usize];
+                let next: u16 = self.registers[Register::PC as usize];
                 let offset: u16 = self.memory[next as usize];
                 let address: u16 = base + offset;
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::PC] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                self.registers[Register::PC as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
-            0x1B => { Value::Register { register: Register::SP, value: self.registers[Register::SP] } } // sp
-            0x1C => { Value::Register { register: Register::PC, value: self.registers[Register::PC] } } // pc
-            0x1D => { Value::Register { register: Register::EX, value: self.registers[Register::EX] } } // sp
+            0x1B => { // SP
+                Decoded {
+                    result: Value::Register {
+                        register: Register::SP,
+                        value: self.registers[Register::SP as usize],
+                    },
+                    time: 0,
+                }
+            }
+            0x1C => { // PC
+                Decoded {
+                    result: Value::Register {
+                        register: Register::PC,
+                        value: self.registers[Register::PC as usize],
+                    },
+                    time: 0,
+                }
+            }
+            0x1D => { // EX
+                Decoded {
+                    result: Value::Register {
+                        register: Register::EX,
+                        value: self.registers[Register::EX as usize],
+                    },
+                    time: 0,
+                }
+            }
             0x1E => { // [NEXT]
-                let next: u16 = self.registers[Register::PC];
+                let next: u16 = self.registers[Register::PC as usize];
                 let address: u16 = self.memory[next as usize];
                 let value: u16 = self.memory[address as usize];
-                self.registers[Register::PC] += 1;
-                self.delay += 1;
-                Value::Memory { address, value }
+                self.registers[Register::PC as usize] += 1;
+                Decoded { result: Value::Memory { address, value }, time: 1 }
             }
             0x1F => { // NEXT (literal)
-                let next: u16 = self.registers[Register::PC];
+                let next: u16 = self.registers[Register::PC as usize];
                 let value: u16 = self.memory[next as usize];
-                self.registers[Register::PC];
-                self.delay += 1;
-                Value::Literal { value }
+                self.registers[Register::PC as usize];
+                Decoded { result: Value::Literal { value }, time: 1 }
             }
         }
     }
-    /// Magical opcodes always have their lower ten bits unset, have no values and a
-    /// six bit opcode. In binary, they have the format: oooooo----------
+    /// Nullary opcodes always have their lower ten bits unset, have no values and a
+    /// six bit opcode. In binary, they have the format: oooooo0000000000
     /// --- Magical opcodes: (5 bits) --------------------------------------------------
     ///  C | VAL  | NAME  | DESCRIPTION
     /// ---+------+-------+-------------------------------------------------------------
@@ -616,11 +777,11 @@ impl VCPU16 {
     ///  - | 0x3E | -     | Unused
     ///  - | 0x3F | -     | Unused
     /// ---+------+-------+-------------------------------------------------------------
-    fn decode_nullary(&mut self, instruction_word: u16) -> Instruction {
+    fn decode_nullary(&mut self, instruction_word: u16) -> Decoded<Instruction> {
         match (instruction_word & 0xFC00) >> 10 {
-            0x00 => Instruction::NOP,
-            0x01 => Instruction::HIB,
-            _ => Instruction::ERR,
+            0x00 => Decoded { result: Instruction::NOP, time: 0 },
+            0x01 => Decoded { result: Instruction::HIB, time: 0 },
+            _ => Decoded { result: Instruction::ERR, time: 0 },
         }
     }
     ///
@@ -672,19 +833,22 @@ impl VCPU16 {
     ///  - | 0x1E | -     | Unused
     ///  - | 0x1F | -     | Unused
     /// ---+------+-------+-------------------------------------------------------------
-    fn decode_unary(&mut self, instruction_word: u16) -> Instruction {
-        let left = self.decode_left(instruction_word);
+    fn decode_unary(&mut self, instruction_word: u16) -> Decoded<Instruction> {
+        let (left, ltime) = {
+            let value = self.decode_left(instruction_word);
+            (value.result, value.time)
+        };
         match (instruction_word & 0x03E0) >> 5 {
-            0x01 => { Instruction::JSR { left } }
-            0x08 => { Instruction::INT { left } }
-            0x09 => { Instruction::IAG { left } }
-            0x0A => { Instruction::IAS { left } }
-            0x0B => { Instruction::RFI { left } }
-            0x0C => { Instruction::IAQ { left } }
-            0x10 => { Instruction::HWN { left } }
-            0x11 => { Instruction::HWQ { left } }
-            0x12 => { Instruction::HWI { left } }
-            _ => Instruction::ERR,
+            0x01 => Decoded { result: Instruction::JSR { left }, time: 3 + ltime },
+            0x08 => Decoded { result: Instruction::INT { left }, time: 4 + ltime },
+            0x09 => Decoded { result: Instruction::IAG { left }, time: 1 + ltime },
+            0x0A => Decoded { result: Instruction::IAS { left }, time: 1 + ltime },
+            0x0B => Decoded { result: Instruction::RFI { left }, time: 3 + ltime },
+            0x0C => Decoded { result: Instruction::IAQ { left }, time: 2 + ltime },
+            0x10 => Decoded { result: Instruction::HWN { left }, time: 2 + ltime },
+            0x11 => Decoded { result: Instruction::HWQ { left }, time: 4 + ltime },
+            0x12 => Decoded { result: Instruction::HWI { left }, time: 4 + ltime },
+            _ => Decoded { result: Instruction::ERR, time: 0 },
         }
     }
     ///
@@ -739,50 +903,58 @@ impl VCPU16 {
     ///    When they skip an if instruction, they will skip an additional instruction
     ///    at the cost of one extra cycle. This lets you easily chain conditionals.
     ///  * Signed numbers are represented using two's complement.
-    fn decode_binary(&mut self, instruction_word: u16) -> Instruction {
-        let left = self.decode_left(instruction_word);
-        let right = self.decode_right(instruction_word);
+    fn decode_binary(&mut self, instruction_word: u16) -> Decoded<Instruction> {
+        let (left, ltime) = {
+            let value = self.decode_left(instruction_word);
+            (value.result, value.time)
+        };
+        let (right, rtime) = {
+            let value = self.decode_left(instruction_word);
+            (value.result, value.time)
+        };
+        let time = ltime + rtime;
         match (instruction_word & 0x001F) >> 0 {
-            0x01 => { Instruction::SET { left, right } }
-            0x02 => { Instruction::ADD { left, right } }
-            0x03 => { Instruction::SUB { left, right } }
-            0x04 => { Instruction::MUL { left, right } }
-            0x05 => { Instruction::MLI { left, right } }
-            0x06 => { Instruction::DIV { left, right } }
-            0x07 => { Instruction::DVI { left, right } }
-            0x08 => { Instruction::MOD { left, right } }
-            0x09 => { Instruction::MDI { left, right } }
-            0x0A => { Instruction::AND { left, right } }
-            0x0B => { Instruction::BOR { left, right } }
-            0x0C => { Instruction::XOR { left, right } }
-            0x0D => { Instruction::SHR { left, right } }
-            0x0E => { Instruction::ASR { left, right } }
-            0x0F => { Instruction::SHL { left, right } }
-            0x10 => { Instruction::IFB { left, right } }
-            0x11 => { Instruction::IFC { left, right } }
-            0x12 => { Instruction::IFE { left, right } }
-            0x13 => { Instruction::IFN { left, right } }
-            0x14 => { Instruction::IFG { left, right } }
-            0x15 => { Instruction::IFA { left, right } }
-            0x16 => { Instruction::IFL { left, right } }
-            0x17 => { Instruction::IFU { left, right } }
-            0x18 => { Instruction::ERR }
-            0x19 => { Instruction::ERR }
-            0x1A => { Instruction::ADX { left, right } }
-            0x1B => { Instruction::SBX { left, right } }
-            0x1C => { Instruction::ERR }
-            0x1D => { Instruction::ERR }
-            0x1E => { Instruction::STI { left, right } }
-            0x1F => { Instruction::STD { left, right } }
+            0x01 => Decoded { result: Instruction::SET { left, right }, time: 0 + time },
+            0x02 => Decoded { result: Instruction::ADD { left, right }, time: 2 + time },
+            0x03 => Decoded { result: Instruction::SUB { left, right }, time: 2 + time },
+            0x04 => Decoded { result: Instruction::MUL { left, right }, time: 2 + time },
+            0x05 => Decoded { result: Instruction::MLI { left, right }, time: 2 + time },
+            0x06 => Decoded { result: Instruction::DIV { left, right }, time: 3 + time },
+            0x07 => Decoded { result: Instruction::DVI { left, right }, time: 3 + time },
+            0x08 => Decoded { result: Instruction::MOD { left, right }, time: 3 + time },
+            0x09 => Decoded { result: Instruction::MDI { left, right }, time: 3 + time },
+            0x0A => Decoded { result: Instruction::AND { left, right }, time: 1 + time },
+            0x0B => Decoded { result: Instruction::BOR { left, right }, time: 1 + time },
+            0x0C => Decoded { result: Instruction::XOR { left, right }, time: 1 + time },
+            0x0D => Decoded { result: Instruction::SHR { left, right }, time: 1 + time },
+            0x0E => Decoded { result: Instruction::ASR { left, right }, time: 1 + time },
+            0x0F => Decoded { result: Instruction::SHL { left, right }, time: 1 + time },
+            0x10 => Decoded { result: Instruction::IFB { left, right }, time: 2 + time },
+            0x11 => Decoded { result: Instruction::IFC { left, right }, time: 2 + time },
+            0x12 => Decoded { result: Instruction::IFE { left, right }, time: 2 + time },
+            0x13 => Decoded { result: Instruction::IFN { left, right }, time: 2 + time },
+            0x14 => Decoded { result: Instruction::IFG { left, right }, time: 2 + time },
+            0x15 => Decoded { result: Instruction::IFA { left, right }, time: 2 + time },
+            0x16 => Decoded { result: Instruction::IFL { left, right }, time: 2 + time },
+            0x17 => Decoded { result: Instruction::IFU { left, right }, time: 2 + time },
+            0x18 => Decoded { result: Instruction::ERR, time: 1 },
+            0x19 => Decoded { result: Instruction::ERR, time: 1 },
+            0x1A => Decoded { result: Instruction::ADX { left, right }, time: 3 + time },
+            0x1B => Decoded { result: Instruction::SBX { left, right }, time: 3 + time },
+            0x1C => Decoded { result: Instruction::ERR, time: 1 },
+            0x1D => Decoded { result: Instruction::ERR, time: 1 },
+            0x1E => Decoded { result: Instruction::STI { left, right }, time: 2 + time },
+            0x1F => Decoded { result: Instruction::STD { left, right }, time: 2 + time },
         }
     }
 
     ///
     /// Decode Next Instruction
     ///
-    fn decode(&mut self) {
-        let instruction_word: u16 = self.data[self.registers[Register::PC]];
-        self.registers[Register::PC] += 1;
+    fn decode(&mut self) -> Decoded<Instruction> {
+        let address: u16 = self.registers[Register::PC as usize];
+        let instruction_word: u16 = self.memory[address as usize];
+        self.registers[Register::PC as usize] += 1;
         if instruction_word & 0x03FF == 0 {
             self.decode_nullary(instruction_word)
         } else if instruction_word & 0x001F == 0 {
@@ -798,7 +970,17 @@ impl VCPU16 {
     }
 
     pub fn step(&mut self) {
-        self.execute(self.decode());
+        match self.state {
+            State::Idle => {
+                let (instruction, cycles) = {
+                    let instruction = self.decode();
+                    (instruction.result, instruction.time)
+                };
+
+                self.execute(instruction);
+            }
+        }
+
     }
 }
 
