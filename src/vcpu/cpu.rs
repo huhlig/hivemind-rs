@@ -5,6 +5,9 @@ use std::io::{Read, Write};
 use std::mem;
 use std::slice;
 
+///
+/// VCPU State Storage
+///
 pub struct VCPU16 {
     registers: [u16; 12],
     memory: [u16; 65536],
@@ -12,14 +15,9 @@ pub struct VCPU16 {
 
 }
 
-pub enum State {
-    Idle,
-    Busy(u16, Instruction),
-    Sleeping(u16),
-    Hibernating,
-    Halted,
-}
-
+///
+/// VCPU Register Index
+///
 enum Register {
     A = 0x0,
     B = 0x1,
@@ -35,10 +33,25 @@ enum Register {
     IA = 0xB,
 }
 
+///
+/// VCPU Operating States
+///
+enum State {
+    Idle,
+    Busy(u16, Instruction),
+    Sleeping(u16),
+    Hibernating,
+    Halted,
+}
+
+///
+/// Decoded Instruction Value
+///
 enum Value {
     Register { register: Register, value: u16 },
     Memory { address: u16, value: u16 },
     Literal { value: u16 },
+    None,
 }
 
 struct Decoded<T> {
@@ -434,6 +447,7 @@ impl VCPU16 {
             0x3D => { Decoded { result: Value::Literal { value: 28 }, time: 0 } }
             0x3E => { Decoded { result: Value::Literal { value: 29 }, time: 0 } }
             0x3F => { Decoded { result: Value::Literal { value: 30 }, time: 0 } }
+            _ => { Decoded { result: Value::None, time: 0 } }
         }
     }
     ///
@@ -705,6 +719,7 @@ impl VCPU16 {
                 self.registers[Register::PC as usize];
                 Decoded { result: Value::Literal { value }, time: 1 }
             }
+            _ => Decoded { result: Value::None, time: 0 }
         }
     }
     /// Nullary opcodes always have their lower ten bits unset, have no values and a
@@ -945,6 +960,7 @@ impl VCPU16 {
             0x1D => Decoded { result: Instruction::ERR, time: 1 },
             0x1E => Decoded { result: Instruction::STI { left, right }, time: 2 + time },
             0x1F => Decoded { result: Instruction::STD { left, right }, time: 2 + time },
+            _ => Decoded { result: Instruction::ERR, time: 0 }
         }
     }
 
@@ -966,7 +982,11 @@ impl VCPU16 {
 
     /// Execute Instruction
     fn execute(&mut self, instruction: Instruction) {
-        match instruction {}
+        match instruction {
+            _=>{
+                //TODO: Stop doing nothing
+            }
+        }
     }
 
     pub fn step(&mut self) {
@@ -979,8 +999,17 @@ impl VCPU16 {
 
                 self.execute(instruction);
             }
-        }
+            State::Busy(time,instruction) =>{
 
+            },
+            State::Sleeping(time) => {
+                self.state = State::Sleeping(time-1);
+            }
+            State::Hibernating => {
+                // Wake up on Interrupt
+            }
+
+        }
     }
 }
 
