@@ -983,32 +983,30 @@ impl VCPU16 {
     /// Execute Instruction
     fn execute(&mut self, instruction: Instruction) {
         match instruction {
-            _=>{
+            _ => {
                 //TODO: Stop doing nothing
             }
         }
     }
 
     pub fn step(&mut self) {
-        match self.state {
-            State::Idle => {
-                let (instruction, cycles) = {
+        match &self.state {
+            &State::Idle => {
+                let (ref instruction, cycles) = {
                     let instruction = self.decode();
                     (instruction.result, instruction.time)
                 };
 
-                self.execute(instruction);
+                self.execute(&instruction);
             }
-            State::Busy(time,instruction) =>{
-
-            },
-            State::Sleeping(time) => {
-                self.state = State::Sleeping(time-1);
+            &State::Busy(time, instruction) => {}
+            &State::Sleeping(time) => {
+                self.state = State::Sleeping(time - 1);
             }
-            State::Hibernating => {
+            &State::Hibernating => {
                 // Wake up on Interrupt
             }
-
+            &State::Halted => {}
         }
     }
 }
